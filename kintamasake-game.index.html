@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>金玉避けゲーム</title>
+  <link rel="stylesheet" href="https://neon-witch.github.io/kintamasake-game/style.css"/>
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans JP", sans-serif; }
+    .wrap { height: 100%; display: grid; place-items: center; }
+    canvas { background: radial-gradient(1200px 700px at 50% 40%, #0a0f2a 0%, #040613 60%, #000 100%); box-shadow: 0 0 40px rgba(0,0,0,.6) inset; border: 1px solid #0c1438; }
+    .ui { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; }
+    .hud { position:absolute; top:10px; left:10px; color:#cfe3ff; font-weight:800; text-shadow:0 0 6px #0af; font-size: clamp(20px, 2.8vw, 28px); }
+    .overlay { position:absolute; inset:0; display:grid; place-items:center; background: linear-gradient(180deg, rgba(4,6,19,.85), rgba(0,0,0,.8)); color:#e8f0ff; pointer-events:auto; z-index:3; }
+    .panel { text-align:center; padding:24px 28px; border:1px solid #2b3a7a; background: rgba(8,12,40,.6); border-radius:16px; box-shadow: 0 16px 60px rgba(0,0,0,.55), 0 0 80px rgba(50,120,255,.15) inset; }
+    h1 { margin:0 0 8px; font-size: clamp(24px, 5vw, 46px); letter-spacing: .08em; }
+    p { margin: 4px 0 18px; opacity:.9; }
+    .start-btn { pointer-events:auto; display:inline-block; padding:14px 22px; border-radius:999px; background:#0ef; color:#001218; font-weight:900; font-size: clamp(18px, 3.2vw, 26px); letter-spacing:.10em; border:none; cursor:pointer; box-shadow: 0 10px 30px rgba(0,238,255,.35), 0 0 0 2px #0ef inset; transition: transform .06s ease; }
+    .start-btn:active { transform: translateY(1px) scale(.99); }
+    .subtle { font-size:12px; opacity:.65; margin-top:8px }
+    .controls { position:absolute; right:10px; top:10px; display:flex; gap:8px; align-items:center; }
+    .toggle { pointer-events:auto; border-radius:999px; padding:8px 12px; background:#0b1238; color:#9ec6ff; border:1px solid #214; cursor:pointer; }
+    .gameover { position:absolute; inset:0; display:none; place-items:center; background: radial-gradient(400px 200px at 50% 45%, rgba(200,0,20,.12), rgba(0,0,0,.7)); color:#fff; pointer-events:auto; z-index:4; }
+    .gameover .panel { background: rgba(10,0,20,.6); border-color:#6b123a; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="game" width="540" height="840" aria-label="金玉避けゲーム"></canvas>
+    <div class="ui">
+      <div class="hud">スコア: <span id="score">0</span></div>
+      <div class="controls">
+        <button id="mute" class="toggle" aria-label="BGMミュート切替">🔊 BGM</button>
+      </div>
+      <div class="overlay" id="start">
+        <div class="panel">
+          <h1>金玉避けゲーム</h1>
+          <p>方向キーで左右に移動</p>
+          <button class="start-btn" id="startBtn">避けるぜ！</button>
+          <div class="subtle">※ クリックまたはEnterで開始 / Pause: P</div>
+        </div>
+      </div>
+      <div class="gameover" id="gameover">
+        <div class="panel">
+          <h1>爆散…！</h1>
+          <p>スコア：<span id="finalScore">0</span></p>
+          <button class="start-btn" id="retryBtn">もう一回！</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  "use strict";
+  window.addEventListener('DOMContentLoaded', () => {
+    // ===== Utils =====
+    const rand = (a,b)=>Math.random()*(b-a)+a;
+    const clamp = (v,min,max)=>Math.max(min, Math.min(max, v));
+
+    // ===== Canvas =====
+    const canvas = document.getElementById('game');
+    if(!canvas){ console.error('[Init] Canvas #game not found'); return; }
+    const ctx = canvas.getContext('2d');
+    if(!ctx){ console.error('[Init] 2D context unavailable'); return; }
+    const W = canvas.width, H = canvas.height;
+
+    // ===== UI =====
+    const scoreEl = document.getElementById('score');
+    const startOv = document.getElementById('start');
+    const gameOv = document.getElementById('gameover');
+    const finalScoreEl = document.getElementById('finalScore');
+    const startBtn = document.getElementById('startBtn');
+    const retryBtn = document.getElementById('retryBtn');
+    const muteBtn = document.getElementById('mute');
+
+    // ===== Stars =====
+    const stars = Array.from({length: 180}, ()=>({ x: Math.random()*W, y: Math.random()*H, z: rand(0.2,1.6), tw: Math.random() }));
+    function drawStars(dt){
+      for(const s of stars){
+        s.y += s.z * 18 * dt; if(s.y>H){ s.y=0; s.x=Math.random()*W; }
+        const alpha = 0.5 + 0.5*Math.sin((performance.now()/200)+s.tw*6.28);
+        ctx.fillStyle = `rgba(200,220,255,${alpha*s.z*0.6})`;
+        ctx.fillRect(s.x, s.y, s.z*1.8, s.z*1.8);
+      }
+    }
+
+    // ===== Player =====
+    const player = { x: W/2, y: H*0.9, w: 46, h: 40, speed: 320, color: '#F4C9A6', alive: true };
+    function drawPlayer(){
+      ctx.save(); ctx.translate(player.x, player.y); ctx.fillStyle = player.color;
+      const w = player.w, h=player.h;
+      ctx.beginPath();
+      ctx.moveTo(-w*0.5, h*0.5);  // 左下
+      ctx.lineTo(-w*0.5, -h*0.05); // 左柱上端（低め）
+      ctx.lineTo(-w*0.15,-h*0.05); // ベース左
+      ctx.lineTo(-w*0.15,-h*0.5);  // 中央突起
+      ctx.lineTo( w*0.15,-h*0.5);  // 天辺
+      ctx.lineTo( w*0.15,-h*0.05); // ベース右
+      ctx.lineTo( w*0.5, -h*0.05); // 右柱内側
+      ctx.lineTo( w*0.5,  h*0.5);  // 右下
+      ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+
+    // ===== Enemies =====
+    const GOLD = ctx.createRadialGradient(0,0,0, 0,0,18);
+    GOLD.addColorStop(0, '#fff5cc'); GOLD.addColorStop(0.35, '#ffe680'); GOLD.addColorStop(0.7, '#ffd23a'); GOLD.addColorStop(1, '#a77b00');
+    class Ball{
+      constructor(type){
+        this.r = rand(10, 22);
+        this.x = rand(this.r+5, W - this.r - 5);
+        this.y = -this.r - rand(10, 120);
+        this.type = type; // 0:直下降 1:サイン横揺れ 2:スパイラル 3:ランダム加速+重力
+        this.vx = rand(-40, 40); this.vy = rand(120, 220);
+        this.t = rand(0, 6.28); this.g = rand(30, 70);
+      }
+      update(dt, i){
+        this.t += dt;
+        switch(this.type){
+          case 0: this.x += this.vx*dt; this.y += this.vy*dt; if(this.x<this.r||this.x>W-this.r) this.vx*=-1; break;
+          case 1: this.y += this.vy*dt; this.x += Math.sin(this.t*2.2+i)*80*dt; break;
+          case 2: this.y += this.vy*dt + Math.abs(Math.sin(this.t*3+i))*20*dt; this.x += Math.cos(this.t*3+i)*60*dt; this.x = clamp(this.x, this.r, W-this.r); break;
+          case 3: this.vx += rand(-60,60)*dt; this.vx = clamp(this.vx,-180,180); this.vy += this.g*dt; this.vy=clamp(this.vy,80,340); this.x+=this.vx*dt; this.y+=this.vy*dt; if(this.x<this.r||this.x>W-this.r) this.vx*=-1; break;
+        }
+        if(this.y > H + this.r + 20){ this.x = rand(this.r+5, W-this.r-5); this.y = -this.r - rand(10,120); this.vx = rand(-40,40); this.vy = rand(120,220); this.t = rand(0,6.28); }
+      }
+      draw(){ ctx.save(); ctx.translate(this.x,this.y); ctx.beginPath(); ctx.arc(0,0,this.r,0,Math.PI*2); ctx.fillStyle=GOLD; ctx.fill(); ctx.beginPath(); ctx.arc(-this.r*0.35,-this.r*0.35,this.r*0.28,0,Math.PI*2); ctx.fillStyle='rgba(255,255,255,.35)'; ctx.fill(); ctx.restore(); }
+    }
+    let balls = []; function spawnWave(n=14){ for(let i=0;i<n;i++) balls.push(new Ball(i%4)); }
+
+    // ===== Game State =====
+    let last=0, started=false, paused=false, score=0, timeAcc=0, alive=true;
+
+    // ===== Input =====
+    const keys = { ArrowLeft:false, ArrowRight:false };
+    addEventListener('keydown', e => {
+      // P: Pause toggle (開始後/生存時のみ有効)
+      if(e.key==='p' || e.key==='P'){ togglePause(); return; }
+      // Enter: Start/Retry when overlays visible
+      if(e.key==='Enter'){
+        if(!started && startOv && startOv.style.display !== 'none'){ startFromUI(e); return; }
+        if(!alive && gameOv && gameOv.style.display === 'grid'){ startFromUI(e); return; }
+      }
+      // 移動入力はゲーム中のみ
+      if(!started || !alive || gameOv.style.display==='grid') return;
+      if(e.key in keys){ keys[e.key]=true; e.preventDefault(); }
+    });
+    addEventListener('keyup', e => { if(e.key in keys){ keys[e.key]=false; e.preventDefault(); } });
+
+    // ===== Audio =====
+    let actx, master, bgmGain, sfxGain, bgmStarted=false; let bgmInterval=null, nextNoteTime=0, currentStep=0;
+    function initAudio(){ if(actx) return; actx = new (window.AudioContext||window.webkitAudioContext)(); master = actx.createGain(); master.gain.value=0.9; master.connect(actx.destination); bgmGain = actx.createGain(); bgmGain.gain.value=0.45; bgmGain.connect(master); sfxGain = actx.createGain(); sfxGain.gain.value=0.9; sfxGain.connect(master); }
+    function clickStartAudio(){ initAudio(); if(actx.state==='suspended') actx.resume(); if(!bgmStarted) startMinimalTechno(); }
+    function makeKick(t){ const o=actx.createOscillator(), g=actx.createGain(); o.type='sine'; g.gain.setValueAtTime(1,t); o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(38,t+0.12); g.gain.exponentialRampToValueAtTime(0.001,t+0.13); o.connect(g).connect(bgmGain); o.start(t); o.stop(t+0.15); }
+    function makeHat(t){ const n=actx.createBufferSource(), b=actx.createBuffer(1, actx.sampleRate*0.05, actx.sampleRate), d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; n.buffer=b; const hp=actx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=6000; const g=actx.createGain(); g.gain.setValueAtTime(0.35,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.05); n.connect(hp).connect(g).connect(bgmGain); n.start(t); n.stop(t+0.05); }
+    function makeBass(t, hz){ const o=actx.createOscillator(); o.type='sawtooth'; const f=actx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=420; f.Q.value=6; const g=actx.createGain(); g.gain.value=0.15; o.frequency.value=hz; o.connect(f).connect(g).connect(bgmGain); o.start(t); o.stop(t+0.24); }
+    const bassSeq=[55,0,55,0,55,0,73.42,0,55,0,55,0,65.41,0,61.74,0];
+    function startMinimalTechno(){ const bpm=126, beat=60/bpm, step=beat/4; if(!actx) initAudio(); nextNoteTime=actx.currentTime+0.05; currentStep=0; bgmStarted=true; const ahead=0.5, look=100; function schedule(){ while(nextNoteTime<actx.currentTime+ahead){ const s=currentStep%16; if(s%4===0) makeKick(nextNoteTime); if(s%2===1 && Math.random()<0.12) makeKick(nextNoteTime); if(s%2===0) makeHat(nextNoteTime); if(Math.random()<0.06) makeHat(nextNoteTime+Math.random()*step*0.5); const note=bassSeq[s]; if(note>0) makeBass(nextNoteTime, note); nextNoteTime+=step; currentStep++; } } if(bgmInterval) clearInterval(bgmInterval); bgmInterval=setInterval(schedule, look); }
+    function boom(){ if(!actx) return; const n=actx.createBufferSource(), b=actx.createBuffer(1, actx.sampleRate*0.3, actx.sampleRate), d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2); n.buffer=b; const f=actx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=1200; f.Q.value=0.5; const g=actx.createGain(); g.gain.setValueAtTime(0.9, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime+0.3); n.connect(f).connect(g).connect(sfxGain); n.start(); n.stop(actx.currentTime+0.3); }
+
+    // ===== Game Logic =====
+    function startGame(){ gameOv.style.display='none'; startOv.style.display='none'; started=true; paused=false; alive=true; score=0; timeAcc=0; player.x=W/2; player.y=H*0.9; player.alive=true; balls.length=0; spawnWave(14); }
+    function togglePause(){ if(!started||!alive) return; paused=!paused; }
+    function rectCircleColl(px,py,pw,ph,cx,cy,cr){ const rx=px-pw/2, ry=py-ph/2; const tx=clamp(cx, rx, rx+pw); const ty=clamp(cy, ry, ry+ph); const dx=cx-tx, dy=cy-ty; return (dx*dx+dy*dy)<=cr*cr; }
+
+    function update(dt){ if(!started||paused||!alive) return; const sp=player.speed*dt; if(keys.ArrowLeft) player.x-=sp; if(keys.ArrowRight) player.x+=sp; player.x = clamp(player.x, player.w/2+2, W-player.w/2-2); for(let i=0;i<balls.length;i++) balls[i].update(dt,i); timeAcc+=dt; if(timeAcc>1.8){ timeAcc=0; balls.push(new Ball(Math.floor(rand(0,4)))); } for(const b of balls){ if(rectCircleColl(player.x,player.y,player.w,player.h,b.x,b.y,b.r)){ alive=false; player.alive=false; keys.ArrowLeft=false; keys.ArrowRight=false; boom(); finalScoreEl.textContent=Math.floor(score); setTimeout(()=>{ gameOv.style.display='grid'; }, 50); } } score+=dt*10; scoreEl.textContent=Math.floor(score); }
+    function render(dt){ ctx.clearRect(0,0,W,H); drawStars(dt); ctx.save(); ctx.globalCompositeOperation='lighter'; for(const b of balls){ ctx.save(); ctx.translate(b.x,b.y); const g=ctx.createRadialGradient(0,0,0,0,0,b.r); g.addColorStop(0,'rgba(255,255,255,.8)'); g.addColorStop(1,'rgba(255,200,0,.15)'); ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,b.r*1.1,0,Math.PI*2); ctx.fill(); ctx.restore(); } ctx.restore(); for(const b of balls) b.draw(); if(player.alive) drawPlayer(); if(paused){ ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,W,H); ctx.fillStyle='#eef'; ctx.font='bold 28px system-ui, sans-serif'; ctx.textAlign='center'; ctx.fillText('PAUSED (Pで再開)', W/2, H/2); } if(!started){ ctx.fillStyle='rgba(0,240,255,.06)'; ctx.beginPath(); ctx.arc(W/2, H*0.45, 160+Math.sin(performance.now()/400)*12, 0, Math.PI*2); ctx.fill(); } }
+
+    // ===== Self Tests =====
+    function runSelfTests(){
+      try{
+        console.assert(clamp(5,0,10)===5,'clamp center');
+        console.assert(clamp(-5,0,10)===0,'clamp low');
+        console.assert(clamp(15,0,10)===10,'clamp high');
+        for(let i=0;i<10;i++){ const r=rand(0,1); console.assert(r>=0&&r<=1,'rand range'); }
+        const tb=new Ball(0); const y0=tb.y; tb.update(0.5,0); console.assert(tb.y>y0,'ball falls');
+        const old=balls; balls=[]; spawnWave(3); console.assert(balls.length===3,'spawnWave'); balls=old;
+        console.assert(player.y===H*0.9 && player.x===W/2,'player pos');
+        console.assert(typeof window.addEventListener==='function','event system');
+        console.assert(typeof startFromUI==='function','startFromUI callable');
+        console.assert(startOv.style.display!=="none",'start overlay visible');
+        console.log('%c[SelfTest] OK','color:#0f0');
+      }catch(e){ console.warn('[SelfTest] failed', e); }
+    }
+
+    function loop(ts){ if(!last) last=ts; const dt=Math.min(1/30,(ts-last)/1000); last=ts; update(dt); render(dt); requestAnimationFrame(loop); }
+    runSelfTests(); requestAnimationFrame(loop);
+
+    // ===== UI Events =====
+    function startFromUI(e){ if(e){ e.stopPropagation(); } clickStartAudio(); startGame(); }
+    startBtn.addEventListener('click', startFromUI);
+    startBtn.addEventListener('pointerdown', startFromUI);
+    retryBtn.addEventListener('click', startFromUI);
+    retryBtn.addEventListener('pointerdown', startFromUI);
+
+    muteBtn.addEventListener('click', ()=>{ clickStartAudio(); const g=bgmGain.gain; g.value=g.value>0?0:0.45; muteBtn.textContent=(g.value>0?'🔊':'🔇')+' BGM'; });
+  });
+  </script>
+</body>
+</html>
